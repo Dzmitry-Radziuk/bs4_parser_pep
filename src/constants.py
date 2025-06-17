@@ -15,6 +15,8 @@ ZERO_INT = 0
 ONE_INT = 1
 FOUR_INT = 4
 FIVE_INT = 5
+TEN_INT = 10
+SIX_INT = 10
 TIME_OUT_GET_RESPOSE = 1
 EXPECTED_STATUS = {
     'A': ('Active', 'Accepted'),
