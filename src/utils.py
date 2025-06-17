@@ -11,9 +11,9 @@ from requests.adapters import HTTPAdapter
 from tqdm import tqdm
 from urllib3.util.retry import Retry
 
-from constants import (BACKOFF_FACTOR, DEFAULT_INT, EXPECTED_STATUS,
-                       MAIN_PEP_URL, PLUS_ONE_INT, STATUS_FORCE_LIST,
-                       TOTAL_RETRIES, VERSION_PYTHON_STATUS_PATTERN)
+from constants import (BACKOFF_FACTOR, DEFAULT_INT, EXPECTED_STATUS, FIVE_INT,
+                       FOUR_INT, MAIN_PEP_URL, ONE_INT, STATUS_FORCE_LIST,
+                       TOTAL_RETRIES, VERSION_PYTHON_STATUS_PATTERN, ZERO_INT)
 from exceptions import ParserFindTagException
 
 
@@ -35,7 +35,7 @@ def create_session_with_retries():
 def get_response(session, url):
     """Отправить GET-запрос и вернуть Response или None при ошибке."""
     try:
-        response = session.get(url, timeout=5)
+        response = session.get(url, timeout=FIVE_INT)
         response.encoding = 'utf-8'
         response.raise_for_status()
         return response
@@ -78,20 +78,20 @@ def get_pep_rows(session):
     soup = get_soup(response)
     table = find_tag(soup, 'table')
 
-    return table.find_all('tr')[1:], numerical_url
+    return table.find_all('tr')[:], numerical_url
 
 
 def process_pep_row(session, row, base_url):
     """Обрабатывает одну строку таблицы PEP и возвращает статус и URL."""
     columns = row.find_all('td')
-    if len(columns) < 4:
+    if len(columns) < FOUR_INT:
         return None
 
-    code = columns[0].text.strip()
-    preview_status = code[1:]
+    code = columns[ZERO_INT].text.strip()
+    preview_status = code[ONE_INT:]
     expected_variants = EXPECTED_STATUS.get(preview_status, ())
 
-    pep_link_tag = columns[1].find('a')
+    pep_link_tag = columns[ONE_INT].find('a')
     if not pep_link_tag:
         return None
 
@@ -129,7 +129,7 @@ def analyze_peps(session, pep_data):
     pep_rows, numerical_url = pep_data
     status_counter = {}
     inappropriate_statuses = []
-    total = 0
+    total = ZERO_INT
 
     for row in tqdm(pep_rows):
         result = process_pep_row(session, row, numerical_url)
@@ -145,7 +145,7 @@ def analyze_peps(session, pep_data):
             })
 
         status_counter[real_status] = status_counter.get(
-            real_status, DEFAULT_INT) + PLUS_ONE_INT
+            real_status, DEFAULT_INT) + ONE_INT
         total += 1
 
     return status_counter, inappropriate_statuses, total

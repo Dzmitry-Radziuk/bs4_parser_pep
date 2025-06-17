@@ -4,7 +4,7 @@ import logging
 
 from prettytable import PrettyTable
 
-from constants import BASE_DIR, DATETIME_FORMAT
+from constants import BASE_DIR, DATETIME_FORMAT, ONE_INT, ZERO_INT
 
 
 def control_output(results, cli_args):
@@ -27,9 +27,9 @@ def default_output(results):
 def pretty_output(results):
     """Вывод результатов в виде красиво отформатированной таблицы."""
     table = PrettyTable()
-    table.field_names = results[0]
+    table.field_names = results[ZERO_INT]
     table.align = 'l'
-    table.add_rows(results[1:])
+    table.add_rows(results[ONE_INT:])
     print(table)
 
 
