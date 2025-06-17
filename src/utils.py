@@ -16,6 +16,7 @@ from constants import (BACKOFF_FACTOR, DEFAULT_INT, EXPECTED_STATUS,
                        TOTAL_RETRIES, VERSION_PYTHON_STATUS_PATTERN)
 from exceptions import ParserFindTagException
 
+
 # --------------------
 # Работа с HTTP сессией и запросами
 # --------------------
