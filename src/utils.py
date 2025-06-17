@@ -16,10 +16,10 @@ from constants import (BACKOFF_FACTOR, EXPECTED_STATUS, MAIN_PEP_URL,
                        VERSION_PYTHON_STATUS_PATTERN)
 from exceptions import ParserFindTagException
 
+
 # --------------------
 # Работа с HTTP сессией и запросами
 # --------------------
-
 
 def create_session_with_retries():
     """Создает сессию requests с ретраями и кэшированием."""
