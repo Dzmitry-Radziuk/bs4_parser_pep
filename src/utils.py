@@ -1,5 +1,3 @@
-# utils.py
-
 import logging
 import re
 from urllib.parse import urljoin
