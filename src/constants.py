@@ -10,6 +10,8 @@ DOWNLOAD_DIR = BASE_DIR / 'downloads'
 TOTAL_RETRIES = 3
 STATUS_FORCE_LIST = [500, 502, 503, 504]
 BACKOFF_FACTOR = 0.3
+DEFAULT_INT = 0
+PLUS_ONE_INT = 1
 EXPECTED_STATUS = {
     'A': ('Active', 'Accepted'),
     'D': ('Deferred',),

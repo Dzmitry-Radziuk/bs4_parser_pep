@@ -11,11 +11,10 @@ from requests.adapters import HTTPAdapter
 from tqdm import tqdm
 from urllib3.util.retry import Retry
 
-from constants import (BACKOFF_FACTOR, EXPECTED_STATUS, MAIN_PEP_URL,
-                       STATUS_FORCE_LIST, TOTAL_RETRIES,
-                       VERSION_PYTHON_STATUS_PATTERN)
+from constants import (BACKOFF_FACTOR, DEFAULT_INT, EXPECTED_STATUS,
+                       MAIN_PEP_URL, PLUS_ONE_INT, STATUS_FORCE_LIST,
+                       TOTAL_RETRIES, VERSION_PYTHON_STATUS_PATTERN)
 from exceptions import ParserFindTagException
-
 
 # --------------------
 # Работа с HTTP сессией и запросами
@@ -144,7 +143,8 @@ def analyze_peps(session, pep_data):
                 'real_status': real_status
             })
 
-        status_counter[real_status] = status_counter.get(real_status, 0) + 1
+        status_counter[real_status] = status_counter.get(
+            real_status, DEFAULT_INT) + PLUS_ONE_INT
         total += 1
 
     return status_counter, inappropriate_statuses, total
