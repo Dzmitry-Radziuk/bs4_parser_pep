@@ -9,10 +9,11 @@ from requests.adapters import HTTPAdapter
 from tqdm import tqdm
 from urllib3.util.retry import Retry
 
-from constants import (BACKOFF_FACTOR, DEFAULT_INT, EXPECTED_STATUS, FIVE_INT,
-                       FOUR_INT, MAIN_PEP_URL, ONE_INT, STATUS_FORCE_LIST,
-                       TOTAL_RETRIES, VERSION_PYTHON_STATUS_PATTERN, ZERO_INT)
-from exceptions import ParserFindTagException
+from src.constants import (BACKOFF_FACTOR, DEFAULT_INT, EXPECTED_STATUS,
+                           FIVE_INT, FOUR_INT, MAIN_PEP_URL, ONE_INT,
+                           STATUS_FORCE_LIST, TOTAL_RETRIES,
+                           VERSION_PYTHON_STATUS_PATTERN, ZERO_INT)
+from src.exceptions import ParserFindTagException
 
 
 # --------------------
@@ -22,25 +23,23 @@ from exceptions import ParserFindTagException
 def create_session_with_retries():
     """Создает сессию requests с ретраями и кэшированием."""
     session = requests_cache.CachedSession()
-    retries = Retry(total=TOTAL_RETRIES, backoff_factor=BACKOFF_FACTOR,
-                    status_forcelist=STATUS_FORCE_LIST)
+    retries = Retry(
+        total=TOTAL_RETRIES,
+        backoff_factor=BACKOFF_FACTOR,
+        status_forcelist=STATUS_FORCE_LIST
+    )
     adapter = HTTPAdapter(max_retries=retries)
     session.mount('http://', adapter)
     session.mount('https://', adapter)
     return session
 
 
-def get_response(session, url):
-    """Отправить GET-запрос и вернуть Response или None при ошибке."""
-    try:
-        response = session.get(url, timeout=FIVE_INT)
-        response.encoding = 'utf-8'
-        response.raise_for_status()
-        return response
-    except RequestException:
-        logging.exception(
-            f'Ошибка при загрузке страницы {url}', stack_info=True)
-        return None
+def get_response(session, url, encoding='utf-8'):
+    """Отправить GET-запрос и вернуть Response."""
+    response = session.get(url, timeout=FIVE_INT)
+    response.encoding = encoding
+    response.raise_for_status()
+    return response
 
 
 # --------------------
@@ -52,12 +51,19 @@ def get_soup(response):
     return BeautifulSoup(response.text, 'lxml')
 
 
+def fetch_and_parse(session, base_url, relative_path=''):
+    """Получить и распарсить страницу по URL."""
+    url = urljoin(base_url, relative_path)
+    response = get_response(session, url)
+    return get_soup(response)
+
+
 def find_tag(soup, tag, attrs=None):
     """Найти тег в BeautifulSoup или вызвать исключение, если не найден."""
-    searched_tag = soup.find(tag, attrs=(attrs or {}))
+    searched_tag = soup.find(tag, attrs=attrs or {})
     if searched_tag is None:
         error_msg = f'Не найден тег {tag} {attrs}'
-        logging.error(error_msg, stack_info=True)
+        logging.error(error_msg)
         raise ParserFindTagException(error_msg)
     return searched_tag
 
@@ -67,16 +73,28 @@ def find_tag(soup, tag, attrs=None):
 # --------------------
 
 def get_pep_rows(session):
-    """Получает строки таблицы PEP с URL страницы."""
-    numerical_url = MAIN_PEP_URL + 'numerical'
-    response = get_response(session, numerical_url)
-    if response is None:
+    """Получает строки таблицы PEP и базовый URL страницы."""
+    numerical_url = urljoin(MAIN_PEP_URL, 'numerical')
+    try:
+        response = get_response(session, numerical_url)
+    except RequestException as e:
+        logging.error(f'Ошибка загрузки таблицы PEP: {e}')
         return None
 
     soup = get_soup(response)
     table = find_tag(soup, 'table')
+    rows = table.find_all('tr')
+    return rows, numerical_url
 
-    return table.find_all('tr')[:], numerical_url
+
+def extract_status_from_dl(dl_tag):
+    """Извлекает статус из тега <dl>."""
+    dt_tags = dl_tag.find_all('dt')
+    dd_tags = dl_tag.find_all('dd')
+    for dt_tag, dd_tag in zip(dt_tags, dd_tags):
+        if dt_tag.text.strip() == 'Status:':
+            return dd_tag.text.strip()
+    return None
 
 
 def process_pep_row(session, row, base_url):
@@ -90,18 +108,20 @@ def process_pep_row(session, row, base_url):
     expected_variants = EXPECTED_STATUS.get(preview_status, ())
 
     pep_link_tag = columns[ONE_INT].find('a')
-    if not pep_link_tag:
+    if pep_link_tag is None:
         return None
 
     href = pep_link_tag.get('href')
     pep_url = urljoin(base_url, href)
-    response = get_response(session, pep_url)
-    if response is None:
+
+    try:
+        response = get_response(session, pep_url)
+    except RequestException:
         return None
 
     soup = get_soup(response)
     dl_tag = soup.find('dl')
-    if not dl_tag:
+    if dl_tag is None:
         return None
 
     real_status = extract_status_from_dl(dl_tag)
@@ -112,39 +132,43 @@ def process_pep_row(session, row, base_url):
     return real_status, expected_variants, pep_url
 
 
-def extract_status_from_dl(dl_tag):
-    """Извлекает статус из тега <dl>."""
-    dt_tags = dl_tag.find_all('dt')
-    dd_tags = dl_tag.find_all('dd')
-    for dt_tag, dd_tag in zip(dt_tags, dd_tags):
-        if dt_tag.text.strip() == 'Status:':
-            return dd_tag.text.strip()
-    return None
-
-
 def analyze_peps(session, pep_data):
-    """Анализирует строки PEP, подсчитывает статусы и собирает некорректные."""
+    """
+    Анализирует строки PEP, подсчитывает статусы,
+    собирает некорректные статусы и ошибки.
+    """
     pep_rows, numerical_url = pep_data
     status_counter = {}
     inappropriate_statuses = []
+    errors = []
     total = ZERO_INT
 
-    for row in tqdm(pep_rows):
-        result = process_pep_row(session, row, numerical_url)
-        if result is None:
-            continue
+    for row in tqdm(pep_rows, desc='Обработка PEP'):
+        try:
+            result = process_pep_row(session, row, numerical_url)
+            if result is None:
+                logging.warning(f'Пропущена строка PEP:'
+                                'не удалось обработать строку'
+                                f'или отсутствуют данные: {row}')
+                continue
 
-        real_status, expected_variants, pep_url = result
-        if expected_variants and real_status not in expected_variants:
-            inappropriate_statuses.append({
-                'pep_url': pep_url,
-                'expected_variants': expected_variants,
-                'real_status': real_status
-            })
+            real_status, expected_variants, pep_url = result
+            if expected_variants and real_status not in expected_variants:
+                inappropriate_statuses.append({
+                    'pep_url': pep_url,
+                    'expected_variants': expected_variants,
+                    'real_status': real_status
+                })
 
-        status_counter[real_status] = status_counter.get(
-            real_status, DEFAULT_INT) + ONE_INT
-        total += 1
+            status_counter[real_status] = status_counter.get(
+                real_status, DEFAULT_INT) + ONE_INT
+            total += 1
+
+        except Exception as e:
+            errors.append(f'Ошибка при обработке строки PEP: {e}')
+
+    for err_msg in errors:
+        logging.warning(err_msg)
 
     return status_counter, inappropriate_statuses, total
 
@@ -165,9 +189,12 @@ def log_inappropriate_statuses(inappropriate_statuses):
 
 def parse_python_version_page(session, url):
     """Парсит страницу нововведений конкретной версии Python."""
-    response = get_response(session, url)
-    if response is None:
+    try:
+        response = get_response(session, url)
+    except RequestException as e:
+        logging.warning(f'Не удалось получить страницу {url}: {e}')
         return None
+
     soup = get_soup(response)
     h1 = find_tag(soup, 'h1')
     dl = find_tag(soup, 'dl')
@@ -175,16 +202,14 @@ def parse_python_version_page(session, url):
     return (url, h1.text if h1 else '', dl_text)
 
 
-def get_sidebar_ul_tags(response):
+def get_sidebar_ul_tags(soup):
     """Возвращает все теги <ul> из сайдбара документации."""
-    soup = get_soup(response)
     sidebar = find_tag(soup, 'div', {'class': 'sphinxsidebarwrapper'})
     return sidebar.find_all('ul')
 
 
-def get_python_new_features_sections(response):
-    """Парсит HTML и возвращает список секций с новыми функциями Python."""
-    soup = get_soup(response)
+def get_python_new_features_sections(soup):
+    """Парсит BeautifulSoup и возвращает список секций с новыми функциями."""
     main_div = find_tag(soup, 'section', {'id': 'what-s-new-in-python'})
     div_with_ul = find_tag(main_div, 'div', {'class': 'toctree-wrapper'})
     sections_by_python = div_with_ul.find_all('li', class_='toctree-l1')
@@ -194,15 +219,31 @@ def get_python_new_features_sections(response):
 def parse_versions_list(ul_tag, pattern=VERSION_PYTHON_STATUS_PATTERN):
     """Парсит список версий из <ul> по заданному паттерну."""
     results = []
-    a_tags = ul_tag.find_all('a')
-    for a_tag in a_tags:
-        link = a_tag['href']
+    for a_tag in ul_tag.find_all('a'):
+        link = a_tag.get('href')
         text_match = re.search(pattern, a_tag.text)
         if text_match:
             version, status = text_match.groups()
         else:
-            version, status = a_tag.text, ''
+            version, status = a_tag.text.strip(), ''
         results.append((link, version, status))
+    return results
+
+
+def parse_whats_new_sections(session, sections, base_url):
+    """Парсит и возвращает данные по разделам 'Что нового'."""
+    results = []
+    for section in tqdm(sections, desc='Парсинг секций "What\'s New"'):
+        version_a_tag = find_tag(section, 'a')
+        href = version_a_tag.get('href')
+        version_link = urljoin(base_url, href)
+        parsed_data = parse_python_version_page(session, version_link)
+        if parsed_data:
+            results.append(parsed_data)
+        else:
+            logging.warning(
+                f'Парсинг страницы {version_link} вернул пустой результат,'
+                f'пропуск итерации.')
     return results
 
 
@@ -213,14 +254,17 @@ def parse_versions_list(ul_tag, pattern=VERSION_PYTHON_STATUS_PATTERN):
 def download_pdf_archive(session, base_url, save_dir):
     """Скачать PDF архив документации и сохранить его."""
     downloads_url = urljoin(base_url, 'download.html')
-    response = get_response(session, downloads_url)
-    if response is None:
+    try:
+        response = get_response(session, downloads_url)
+    except RequestException as e:
+        logging.error(f'Ошибка загрузки страницы: {e}')
         return None
 
     soup = get_soup(response)
     table = find_tag(soup, 'table', {'class': 'docutils'})
-    pdf_link = find_tag(
-        table, 'a', {'href': re.compile(r'.+pdf-a4\.zip$')})['href']
+    pdf_link_tag = find_tag(
+        table, 'a', {'href': re.compile(r'.+pdf-a4\.zip$')})
+    pdf_link = pdf_link_tag.get('href')
     archive_url = urljoin(downloads_url, pdf_link)
 
     save_dir.mkdir(exist_ok=True, parents=True)
@@ -229,8 +273,8 @@ def download_pdf_archive(session, base_url, save_dir):
     try:
         file_response = session.get(archive_url)
         file_response.raise_for_status()
-    except RequestException:
-        logging.exception(f'Ошибка при загрузке архива: {archive_url}')
+    except RequestException as e:
+        logging.exception(f'Ошибка при загрузке архива: {archive_url}: {e}')
         return None
 
     with open(archive_path, 'wb') as f:

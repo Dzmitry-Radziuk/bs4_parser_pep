@@ -1,80 +1,72 @@
 import logging
-from pathlib import Path
 from urllib.parse import urljoin
 
-from tqdm import tqdm
+from src import constants, utils
+from src.configs import configure_argument_parser, configure_logging
+from src.exceptions import VersionsNotFoundError
+from src.outputs import control_output
 
-from configs import configure_argument_parser, configure_logging
-from constants import MAIN_DOC_URL  # Дописать импорт после ревью.
-from outputs import control_output
-from utils import (analyze_peps, create_session_with_retries,
-                   download_pdf_archive, find_tag, get_pep_rows,
-                   get_python_new_features_sections, get_response,
-                   get_sidebar_ul_tags, log_inappropriate_statuses,
-                   parse_python_version_page, parse_versions_list)
-
-BASE_DIR = Path(__file__).resolve().parent  # Оставил для тестов, потом уберу.
+BASE_DIR = constants.BASE_DIR
 
 
 def pep(session):
     """Парсинг PEP и подсчет статусов."""
-    pep_data = get_pep_rows(session)
+    pep_data = utils.get_pep_rows(session)
     if not pep_data:
         return
 
-    status_counter, inappropriate_statuses, total = analyze_peps(
+    status_counter, inappropriate_statuses, total = utils.analyze_peps(
         session, pep_data)
-    log_inappropriate_statuses(inappropriate_statuses)
+    utils.log_inappropriate_statuses(inappropriate_statuses)
 
-    result = [['Status', 'Count']]
-    for status, count in sorted(status_counter.items()):
-        result.append([status, count])
-    result.append(['Total', total])
+    result = (
+        [['Status', 'Count']]
+        + [list(item) for item in sorted(status_counter.items())]
+        + [['Total', total]]
+    )
     return result
 
 
 def whats_new(session):
     """Сбор новостей о Python."""
-    whats_new_url = urljoin(MAIN_DOC_URL, 'whatsnew/')
-    response = get_response(session, whats_new_url)
-    if response is None:
+    soup = utils.fetch_and_parse(session, constants.MAIN_DOC_URL, 'whatsnew/')
+    if soup is None:
         return
 
-    sections = get_python_new_features_sections(response)
+    sections = utils.get_python_new_features_sections(soup)
 
     results = [('Ссылка на статью', 'Заголовок', 'Редактор, автор')]
-    for section in tqdm(sections):
-        version_a_tag = find_tag(section, 'a')
-        href = version_a_tag['href']
-        version_link = urljoin(whats_new_url, href)
-        parsed_data = parse_python_version_page(session, version_link)
-        if parsed_data:
-            results.append(parsed_data)
+    results.extend(
+        utils.parse_whats_new_sections(
+            session, sections, urljoin(
+                constants.MAIN_DOC_URL, constants.WHATS_NEW_SLUG)))
     return results
 
 
 def latest_versions(session):
     """Получение последних версий Python."""
-    response = get_response(session, MAIN_DOC_URL)
-    if response is None:
+    soup = utils.fetch_and_parse(session, constants.MAIN_DOC_URL)
+    if soup is None:
         return
 
-    ul_tags = get_sidebar_ul_tags(response)
+    ul_tags = utils.get_sidebar_ul_tags(soup)
 
     for ul in ul_tags:
         if 'All versions' in ul.text:
-            return parse_versions_list(ul)
-    raise Exception('Ничего не нашлось')
+            return utils.parse_versions_list(ul)
+    raise VersionsNotFoundError('Список версий Python не найден')
 
 
 def download(session):
     """Загрузка документации и сохранение в папке."""
-    downloads_url = urljoin(MAIN_DOC_URL, 'download.html')
-    response = get_response(session, downloads_url)
-    if response is None:
+    soup = utils.fetch_and_parse(
+        session, constants.MAIN_DOC_URL, constants.DOWNLOAD_HTML_NAME)
+    if soup is None:
         return
-    save_dir = BASE_DIR / 'downloads'  # Оставил для тестов.
-    download_pdf_archive(session, MAIN_DOC_URL, save_dir)
+
+    save_dir = BASE_DIR / constants.DOWNLOAD_DIR_NAME
+    utils.download_pdf_archive(
+        session, constants.MAIN_DOC_URL, save_dir)
 
 
 MODE_TO_FUNCTION = {
@@ -87,10 +79,10 @@ MODE_TO_FUNCTION = {
 
 def main():
     """Точка входа в приложение."""
-    configure_logging()
-    logging.info('Парсер запущен!')
-
     try:
+        configure_logging()
+        logging.info('Парсер запущен!')
+
         arg_parser = configure_argument_parser(MODE_TO_FUNCTION.keys())
         args = arg_parser.parse_args()
         logging.info(f'Аргументы командной строки: {args}')
@@ -100,7 +92,7 @@ def main():
             logging.error(f'Неизвестный режим: {parser_mode}')
             return
 
-        session = create_session_with_retries()
+        session = utils.create_session_with_retries()
 
         if args.clear_cache:
             session.cache.clear()
