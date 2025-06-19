@@ -3,4 +3,4 @@ class ParserFindTagException(Exception):
 
 
 class VersionsNotFoundError(Exception):
-    pass
+    """Вызывается, если не удалось найти информацию о версиях Python."""

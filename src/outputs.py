@@ -13,19 +13,20 @@ def control_output(results, cli_args):
     """Выбор способа вывода данных по аргументам командной строки."""
     output = cli_args.output
     output_handlers = {
-        constants.PRETTY: lambda: pretty_output(results),
-        constants.FILE: lambda: file_output(results, cli_args),
+        constants.PRETTY: pretty_output,
+        constants.FILE: file_output,
     }
-    output_handlers.get(output, lambda: default_output(results))()
+    handler = output_handlers.get(output, default_output)
+    handler(results, cli_args)
 
 
-def default_output(results):
+def default_output(results, cli_args=None):
     """Построчный вывод результатов в терминал."""
     for row in results:
         print(*row)
 
 
-def pretty_output(results):
+def pretty_output(results, cli_args=None):
     """Вывод результатов в виде красиво отформатированной таблицы."""
     table = PrettyTable()
     table.field_names = results[constants.ZERO_INT]

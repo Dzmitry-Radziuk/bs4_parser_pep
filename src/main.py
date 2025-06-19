@@ -11,14 +11,16 @@ BASE_DIR = constants.BASE_DIR
 
 def pep(session):
     """Парсинг PEP и подсчет статусов."""
-    pep_data = utils.get_pep_rows(session)
-    if not pep_data:
+    rows, base_url = utils.get_pep_rows(session)
+
+    if not rows:
+        logging.warning("PEP-таблица пуста или не получена.")
         return
 
     status_counter, inappropriate_statuses, total = utils.analyze_peps(
-        session, pep_data)
+        session, (rows, base_url)
+    )
     utils.log_inappropriate_statuses(inappropriate_statuses)
-
     result = (
         [['Status', 'Count']]
         + [list(item) for item in sorted(status_counter.items())]
@@ -29,25 +31,25 @@ def pep(session):
 
 def whats_new(session):
     """Сбор новостей о Python."""
-    soup = utils.fetch_and_parse(session, constants.MAIN_DOC_URL, 'whatsnew/')
-    if soup is None:
-        return
+    soup = utils.fetch_and_parse(session, constants.MAIN_DOC_URL,
+                                 constants.WHATS_NEW_SLUG)
 
     sections = utils.get_python_new_features_sections(soup)
 
     results = [('Ссылка на статью', 'Заголовок', 'Редактор, автор')]
     results.extend(
         utils.parse_whats_new_sections(
-            session, sections, urljoin(
-                constants.MAIN_DOC_URL, constants.WHATS_NEW_SLUG)))
+            session,
+            sections,
+            urljoin(constants.MAIN_DOC_URL, constants.WHATS_NEW_SLUG)
+        )
+    )
     return results
 
 
 def latest_versions(session):
     """Получение последних версий Python."""
     soup = utils.fetch_and_parse(session, constants.MAIN_DOC_URL)
-    if soup is None:
-        return
 
     ul_tags = utils.get_sidebar_ul_tags(soup)
 
@@ -59,10 +61,8 @@ def latest_versions(session):
 
 def download(session):
     """Загрузка документации и сохранение в папке."""
-    soup = utils.fetch_and_parse(
+    utils.fetch_and_parse(
         session, constants.MAIN_DOC_URL, constants.DOWNLOAD_HTML_NAME)
-    if soup is None:
-        return
 
     save_dir = BASE_DIR / constants.DOWNLOAD_DIR_NAME
     utils.download_pdf_archive(

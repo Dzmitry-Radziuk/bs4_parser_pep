@@ -30,14 +30,14 @@ def configure_argument_parser(available_modes):
 
 def configure_logging():
     """Настраивает логирование с ротацией файлов и выводом в терминал."""
-    log_dir = constants.LOG_DIR_NAME
-    log_dir.mkdir(exist_ok=True)
+    constants.LOG_DIR_NAME.mkdir(exist_ok=True)
 
-    log_file = constants.LOG_FILE_NAME
     rotating_handler = RotatingFileHandler(
-        log_file, maxBytes=constants.TEN_INT ** constants.SIX_INT,
+        constants.LOG_FILE_NAME,
+        maxBytes=constants.TEN_INT ** constants.SIX_INT,
         backupCount=constants.FIVE_INT
     )
+
     logging.basicConfig(
         datefmt=constants.LOG_DT_FORMAT,
         format=constants.LOG_FORMAT,
