@@ -4,3 +4,7 @@ class ParserFindTagException(Exception):
 
 class VersionsNotFoundError(Exception):
     """Вызывается, если не удалось найти информацию о версиях Python."""
+
+
+class NetworkError(Exception):
+    """Ошибка при выполнении сетевого запроса."""

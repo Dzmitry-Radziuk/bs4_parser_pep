@@ -16,8 +16,7 @@ def pep(session):
     if not rows:
         logging.warning("PEP-таблица пуста или не получена.")
         return
-
-    status_counter, inappropriate_statuses, total = utils.analyze_peps(
+    status_counter, inappropriate_statuses, total, = utils.analyze_peps(
         session, (rows, base_url)
     )
     utils.log_inappropriate_statuses(inappropriate_statuses)

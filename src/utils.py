@@ -5,7 +5,6 @@ from urllib.parse import urljoin
 import requests_cache
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
-from requests.exceptions import ConnectionError, RequestException
 from tqdm import tqdm
 from urllib3.util.retry import Retry
 
@@ -13,7 +12,7 @@ from src.constants import (BACKOFF_FACTOR, DEFAULT_INT, EXPECTED_STATUS,
                            FIVE_INT, FOUR_INT, MAIN_PEP_URL, ONE_INT,
                            STATUS_FORCE_LIST, TOTAL_RETRIES,
                            VERSION_PYTHON_STATUS_PATTERN, ZERO_INT)
-from src.exceptions import ParserFindTagException
+from src.exceptions import NetworkError, ParserFindTagException
 
 
 # --------------------
@@ -41,12 +40,8 @@ def get_response(session, url, encoding='utf-8'):
         response.encoding = encoding
         response.raise_for_status()
         return response
-    except ConnectionError as ce:
-        logging.error(f'Ошибка подключения: {ce}')
-        raise
-    except RequestException as re:
-        logging.error(f'Ошибка запроса: {re}')
-        raise
+    except Exception as e:
+        raise NetworkError(f'Ошибка при запросе к {url}: {e}')
 
 
 # --------------------
@@ -82,12 +77,7 @@ def find_tag(soup, tag, attrs=None):
 def get_pep_rows(session):
     """Получает строки таблицы PEP и базовый URL страницы."""
     numerical_url = urljoin(MAIN_PEP_URL, 'numerical')
-    try:
-        soup = fetch_and_parse(session, numerical_url)
-    except RequestException as e:
-        logging.error(f'Ошибка загрузки таблицы PEP: {e}')
-        return None
-
+    soup = fetch_and_parse(session, numerical_url)
     table = find_tag(soup, 'table')
     rows = table.find_all('tr')
     return rows, numerical_url
@@ -106,29 +96,28 @@ def extract_status_from_dl(dl_tag):
 def process_pep_row(session, row, base_url):
     """Обрабатывает одну строку таблицы PEP и возвращает статус и URL."""
     columns = row.find_all('td')
+
     if len(columns) < FOUR_INT:
         return None
 
     code = columns[ZERO_INT].text.strip()
     preview_status = code[ONE_INT:]
     expected_variants = EXPECTED_STATUS.get(preview_status, ())
-    pep_link_tag = find_tag(columns[ONE_INT], 'a')
 
+    pep_link_tag = find_tag(columns[ONE_INT], 'a')
     if pep_link_tag is None:
         return None
+
     href = pep_link_tag.get('href')
     pep_url = urljoin(base_url, href)
 
-    try:
-        soup = fetch_and_parse(session, pep_url)
-    except RequestException:
-        return None
+    soup = fetch_and_parse(session, pep_url)
 
     dl_tag = find_tag(soup, 'dl')
     if dl_tag is None:
         return None
-    real_status = extract_status_from_dl(dl_tag)
 
+    real_status = extract_status_from_dl(dl_tag)
     if real_status is None:
         logging.warning(f'Не найден статус на странице {pep_url}')
         return None
@@ -137,8 +126,9 @@ def process_pep_row(session, row, base_url):
 
 
 def analyze_peps(session, pep_data):
-    """Анализирует строки PEP, подсчитывает статусы собирает."""
+    """Анализирует строки PEP, подсчитывает статусы и собирает ошибки."""
     pep_rows, numerical_url = pep_data
+
     status_counter = {}
     inappropriate_statuses = []
     errors = []
@@ -147,6 +137,9 @@ def analyze_peps(session, pep_data):
     for row in tqdm(pep_rows[ONE_INT:], desc='Обработка PEP'):
         try:
             result = process_pep_row(session, row, numerical_url)
+            if result is None:
+                raise TypeError('Пустой результат обработки')
+
             real_status, expected_variants, pep_url = result
 
             if expected_variants and real_status not in expected_variants:
@@ -161,15 +154,15 @@ def analyze_peps(session, pep_data):
             total += ONE_INT
 
         except TypeError:
-            logging.warning('Пропущена строка PEP:'
-                            'не удалось обработать строку '
-                            f'или отсутствуют данные: {row}')
-            continue
+            errors.append(
+                'Пропущена строка PEP:'
+                f'не удалось обработать строку или отсутствуют данные: {row}'
+            )
         except Exception as e:
             errors.append(f'Ошибка при обработке строки PEP: {e}')
 
     for err_msg in errors:
-        logging.warning(err_msg)
+        logging.error(err_msg)
 
     return status_counter, inappropriate_statuses, total
 
@@ -194,15 +187,12 @@ def log_inappropriate_statuses(inappropriate_statuses):
 
 def parse_python_version_page(session, url):
     """Парсит страницу нововведений конкретной версии Python."""
-    try:
-        soup = fetch_and_parse(session, url)
-    except RequestException as e:
-        logging.warning(f'Не удалось получить страницу {url}: {e}')
-        return None
+    soup = fetch_and_parse(session, url)
 
     h1 = find_tag(soup, 'h1')
     dl = find_tag(soup, 'dl')
     dl_text = dl.text.replace('\n', ' ')
+
     return (url, h1.text if h1 else '', dl_text)
 
 
@@ -237,17 +227,22 @@ def parse_versions_list(ul_tag, pattern=VERSION_PYTHON_STATUS_PATTERN):
 def parse_whats_new_sections(session, sections, base_url):
     """Парсит и возвращает данные по разделам 'Что нового'."""
     results = []
+    errors = []
+
     for section in tqdm(sections, desc='Парсинг секций "What\'s New"'):
         version_a_tag = find_tag(section, 'a')
         href = version_a_tag.get('href')
         version_link = urljoin(base_url, href)
-        parsed_data = parse_python_version_page(session, version_link)
-        if parsed_data:
+
+        try:
+            parsed_data = parse_python_version_page(session, version_link)
             results.append(parsed_data)
-        else:
-            logging.warning(
-                f'Парсинг страницы {version_link} вернул пустой результат,'
-                f'пропуск итерации.')
+        except ConnectionError as e:
+            errors.append(f'Ошибка при обработке {version_link}: {e}')
+
+    for error in errors:
+        logging.error(error)
+
     return results
 
 
@@ -258,28 +253,20 @@ def parse_whats_new_sections(session, sections, base_url):
 def download_pdf_archive(session, base_url, save_dir):
     """Скачать PDF архив документации и сохранить его."""
     downloads_url = urljoin(base_url, 'download.html')
-    try:
-        soup = fetch_and_parse(session, downloads_url)
-    except RequestException as e:
-        logging.error(f'Ошибка загрузки страницы: {e}')
-        return None
+    soup = fetch_and_parse(session, downloads_url)
 
     table = find_tag(soup, 'table', {'class': 'docutils'})
     pdf_link_tag = find_tag(
-        table, 'a', {'href': re.compile(r'.+pdf-a4\.zip$')}
-    )
+        table, 'a', {'href': re.compile(r'.+pdf-a4\.zip$')})
     pdf_link = pdf_link_tag.get('href')
+
     archive_url = urljoin(downloads_url, pdf_link)
 
     save_dir.mkdir(exist_ok=True, parents=True)
     archive_path = save_dir / archive_url.split('/')[-1]
 
-    try:
-        file_response = session.get(archive_url)
-        file_response.raise_for_status()
-    except RequestException as e:
-        logging.exception(f'Ошибка при загрузке архива: {archive_url}: {e}')
-        return None
+    file_response = session.get(archive_url)
+    file_response.raise_for_status()
 
     with open(archive_path, 'wb') as f:
         f.write(file_response.content)

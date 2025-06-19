@@ -35,7 +35,7 @@ def pretty_output(results, cli_args=None):
     print(table)
 
 
-def file_output(results, cli_args):
+def file_output(results, cli_args, encoding='utf-8', dialect='unix'):
     """Сохранение результатов в CSV-файл в папке results."""
     results_dir = BASE_DIR / constants.RESULTS_DIR_NAME
     results_dir.mkdir(exist_ok=True)
@@ -45,7 +45,7 @@ def file_output(results, cli_args):
     file_name = f'{parser_mode}_{now_formatted}.csv'
     file_path = results_dir / file_name
 
-    with open(file_path, 'w', encoding='utf-8') as f:
-        writer = csv.writer(f, dialect='unix')
+    with open(file_path, 'w', encoding=encoding) as f:
+        writer = csv.writer(f, dialect=dialect)
         writer.writerows(results)
     logging.info(f'Файл с результатами был сохранён: {file_path}')
